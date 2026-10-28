@@ -1,0 +1,94 @@
+=====================================================================
+ CONCLUSIONES - PRUEBA DE CARGA DEL SERVICIO DE LOGIN (JMETER)
+=====================================================================
+
+Fecha de ejecución : 2026-10-28, 16:55:09 a 16:57:09 (COT)
+Herramienta        : Apache JMeter 5.6.3 sobre Java 21
+Servicio           : POST https://fakestoreapi.com/auth/login
+Escenario          : 20 hilos, ramp-up 30 s, duración 120 s,
+                     Constant Throughput Timer de 25 TPS
+Datos              : 5 usuarios desde Data/usuarios.csv
+Evidencia          : reports/html/index.html, reports/results.jtl, jmeter.log
+
+
+1. RESULTADOS
+-------------
+  Métrica                         Resultado          Criterio         Estado
+  ------------------------------  -----------------  ---------------  --------
+  Peticiones totales              2 838              -                -
+  Throughput promedio (total)     23,61 TPS          >= 20 TPS        CUMPLE
+  Throughput en meseta            ~25 TPS            >= 20 TPS        CUMPLE
+  Peticiones fallidas             0 (0,00 %)         < 3 %            CUMPLE
+  Códigos de respuesta            201 en el 100 %    -                -
+  Tiempo de respuesta promedio    390,42 ms          -                -
+  Mínimo                          319 ms             -                -
+  Mediana                         381 ms             -                -
+  Percentil 90                    438 ms             -                -
+  Percentil 95                    471 ms             <= 1 500 ms      CUMPLE
+  Percentil 99                    559,83 ms          <= 1 500 ms      CUMPLE
+  Máximo                          1 276 ms           <= 1 500 ms      CUMPLE
+  Hilos concurrentes máximos      20
+
+  Veredicto: la prueba CUMPLE todos los criterios. Ninguna petición
+  superó 1,5 s y no hubo errores.
+
+
+2. HALLAZGOS
+------------
+  - Throughput: se sostuvieron 23,61 TPS de promedio en toda la prueba
+    (rampa de subida incluida). Después de la rampa (segundos 30 a 115)
+    el throughput se mantuvo en 24,98 TPS, prácticamente igual al
+    objetivo de 25 TPS del Constant Throughput Timer.
+  - Tiempo de respuesta: el p99 (560 ms) está muy por debajo del límite
+    de 1,5 s, y el máximo (1 276 ms) queda a 224 ms del límite. La
+    distribución es estable y concentrada: entre la mediana (381 ms) y el
+    p99 hay solo ~180 ms.
+  - El máximo corresponde a la primera petición de la prueba, que tardó
+    1 276 ms. De ese tiempo, 535 ms fueron de conexión (DNS + TCP + TLS).
+    Después JMeter reutiliza las conexiones (keep-alive) y ese costo
+    desaparece.
+  - Funcionalidad: las 2 838 peticiones devolvieron HTTP 201 con token JWT.
+    Los 5 usuarios del CSV se autenticaron correctamente durante toda la
+    prueba.
+  - El servicio está detrás de Cloudflare (cabeceras server: cloudflare,
+    cf-ray). La latencia incluye el viaje hasta el CDN y el origen, así
+    que parte del tiempo medido depende de la red del cliente.
+  - Consistencia entre ejecuciones: el mismo escenario se ejecutó tres
+    veces con resultados similares:
+
+      Ejecución          Peticiones  TPS    Error   p95     p99     Máximo
+      -----------------  ----------  -----  ------  ------  ------  --------
+      12:27 (160 s)      3 827       23,95  0,05 %  476 ms  582 ms  1 944 ms
+      15:00 (160 s)      3 816       23,81  0,00 %  533 ms  652 ms  1 004 ms
+      16:55 (120 s)      2 838       23,61  0,00 %  471 ms  560 ms  1 276 ms
+
+    En la ejecución de las 12:27 hubo 2 fallas (0,05 %), ambas de
+    conexión: la primera petición tardó 1 944 ms por una conexión inicial
+    lenta (1 019 ms de conexión) y hubo un "Connection reset" aislado.
+    Las tres ejecuciones cumplieron el throughput, la tasa de error y los
+    percentiles. El único valor variable es el máximo, que siempre
+    corresponde a la conexión inicial.
+
+
+3. CONCLUSIONES
+---------------
+  - El servicio de login soporta la carga requerida de 20 TPS (se probó a
+    ~24-25 TPS) con todas las respuestas por debajo de 1,5 s y una tasa de
+    error de 0 %.
+  - El margen de capacidad es amplio: con ~0,39 s por petición, 20 hilos
+    podrían generar hasta ~51 TPS. Solo se necesitó la mitad de esa
+    capacidad para sostener los 25 TPS.
+  - El punto más sensible es la primera conexión al servicio (arranque en
+    frío). En las tres ejecuciones fue la petición más lenta y en una de
+    ellas superó 1,5 s.
+
+
+4. RECOMENDACIONES
+------------------
+  - Añadir un periodo de calentamiento (warm-up) que no se mida, para que
+    el arranque en frío no afecte el criterio de tiempo máximo.
+  - Hacer una prueba de estrés incremental (25 -> 50 -> 100 TPS) para
+    identificar el punto de quiebre del servicio.
+  - Hacer una prueba de resistencia (30-60 min) para descartar
+    degradación sostenida y errores de conexión intermitentes.
+  - Incluir casos negativos (credenciales inválidas, respuesta 401).
